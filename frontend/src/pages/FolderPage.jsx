@@ -1,0 +1,186 @@
+import { useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import Layout from '../components/Layout';
+import FolderCard from '../components/FolderCard';
+import FileCard from '../components/FileCard';
+import Modal from '../components/Modal';
+import api from '../api/axios';
+import toast from 'react-hot-toast';
+import { FolderOpen, ChevronRight, Plus, Upload, File } from 'lucide-react';
+
+export default function FolderPage() {
+  const { id } = useParams();
+  const qc = useQueryClient();
+  const [showUpload, setShowUpload] = useState(false);
+  const [showSubfolder, setShowSubfolder] = useState(false);
+  const [subName, setSubName] = useState('');
+  const [file, setFile] = useState(null);
+
+  const { data, isLoading, error: fetchError } = useQuery({
+    queryKey: ['folder', id],
+    queryFn: () => api.get(`/folders/${id}`).then(r => r.data.data),
+  });
+
+  const uploadMut = useMutation({
+    mutationFn: (formData) => api.post('/files/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder', id] });
+      setShowUpload(false);
+      setFile(null);
+      toast.success('File berhasil diunggah.');
+    },
+    onError: (err) => toast.error(err.response?.data?.message || 'Gagal mengunggah file.'),
+  });
+
+  const subfolderMut = useMutation({
+    mutationFn: (nama) => api.post('/folders', { nama, parent_id: id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder', id] });
+      setShowSubfolder(false);
+      setSubName('');
+      toast.success('Subfolder berhasil dibuat.');
+    },
+    onError: (err) => toast.error(err.response?.data?.message || 'Gagal membuat subfolder.'),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (fileId) => api.delete(`/files/${fileId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder', id] });
+      toast.success('File berhasil dihapus.');
+    },
+    onError: (err) => toast.error(err.response?.data?.message || 'Gagal menghapus file.'),
+  });
+
+  const handleUpload = (e) => {
+    e.preventDefault();
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('folder_id', id);
+    uploadMut.mutate(fd);
+  };
+
+  const handleDeleteFile = (f) => {
+    if (window.confirm(`Hapus file "${f.nama_asli}"?`)) deleteMut.mutate(f.id);
+  };
+
+  if (isLoading) return (
+    <Layout>
+      <div className="animate-pulse-soft space-y-4">
+        <div className="h-5 bg-[#F4F4F5] rounded w-1/3" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {[1, 2, 3].map(i => <div key={i} className="bg-[#ffffff] border-[0.5px] border-[#E0E0E0] rounded-[8px] p-[14px] h-[80px]" />)}
+        </div>
+      </div>
+    </Layout>
+  );
+
+  if (fetchError) return (
+    <Layout>
+      <div className="bg-[#ffffff] text-center border-[0.5px] border-[#E0E0E0] rounded-[8px] py-[48px] px-[24px]">
+        <p className="font-[500] text-[#ef4444]">Folder tidak ditemukan.</p>
+        <Link to="/dashboard" className="text-[13px] mt-2 inline-block text-[#297BBF] hover:underline">← Kembali ke Dashboard</Link>
+      </div>
+    </Layout>
+  );
+
+  return (
+    <Layout>
+      <div className="animate-fadeIn">
+        {/* Breadcrumb */}
+        <nav className="flex items-center gap-1.5 mb-5 text-[13px] text-[#666666]">
+          <Link to="/dashboard" className="text-[#297BBF] hover:underline">Dashboard</Link>
+          <ChevronRight size={14} color="#E0E0E0" />
+          <span className="font-[500] text-[#1a1a1a]">{data.nama}</span>
+        </nav>
+
+        {/* Folder Header */}
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-[40px] h-[40px] bg-[#EBF4FC] rounded-[8px]">
+              <FolderOpen size={22} color="#297BBF" />
+            </div>
+            <div>
+              <h1 className="font-[600] text-[18px] text-[#1a1a1a]">{data.nama}</h1>
+              <p className="text-[12px] text-[#666666]">Dibuat oleh {data.pembuat?.nama}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowSubfolder(true)} className="btn-secondary flex items-center gap-1.5 text-[13px]">
+              <Plus size={14} />
+              Subfolder
+            </button>
+            <button onClick={() => setShowUpload(true)} className="btn-primary flex items-center gap-1.5 text-[13px]">
+              <Upload size={14} />
+              Unggah File
+            </button>
+          </div>
+        </div>
+
+        {/* Subfolders */}
+        {data.subfolders?.length > 0 && (
+          <div className="mb-6">
+            <h2 className="uppercase tracking-[0.05em] font-[600] mb-3 text-[11px] text-[#666666]">Subfolder</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {data.subfolders.map((f, i) => <FolderCard key={f.id} folder={f} index={i} />)}
+            </div>
+          </div>
+        )}
+
+        {/* Files */}
+        <div>
+          <h2 className="uppercase tracking-[0.05em] font-[600] mb-3 text-[11px] text-[#666666]">File ({data.files?.length || 0})</h2>
+          {!data.files?.length ? (
+            <div className="bg-[#ffffff] text-center border-[0.5px] border-[#E0E0E0] rounded-[8px] py-[40px] px-[24px]">
+              <div className="flex items-center justify-center mx-auto mb-3 w-[44px] h-[44px] bg-[#F4F4F5] rounded-[8px]">
+                <File size={22} color="#E0E0E0" />
+              </div>
+              <p className="text-[13px] text-[#666666]">Belum ada file. Klik "Unggah File" untuk memulai.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {data.files.map(f => <FileCard key={f.id} file={f} onDelete={handleDeleteFile} />)}
+            </div>
+          )}
+        </div>
+
+        {/* Upload Modal */}
+        <Modal isOpen={showUpload} onClose={() => { setShowUpload(false); setFile(null); }} title="Unggah File">
+          <form onSubmit={handleUpload} className="space-y-4">
+            <div>
+              <label className="block font-[500] mb-2 text-[12px] text-[#333333]">Pilih File</label>
+              <div className="border-2 border-dashed border-[#E0E0E0] rounded-[8px] p-6 text-center transition-colors">
+                <input type="file" onChange={(e) => setFile(e.target.files[0])} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium" style={{ '--tw-file-bg': '#EBF4FC', '--tw-file-text': '#297BBF' }} />
+              </div>
+              {file && <p className="text-[12px] mt-2 text-[#666666]">📎 {file.name} ({(file.size / 1024).toFixed(1)} KB)</p>}
+            </div>
+            {uploadMut.isError && <p className="text-[14px] text-[#ef4444]">{uploadMut.error?.response?.data?.message || 'Gagal mengunggah.'}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => { setShowUpload(false); setFile(null); }} className="btn-secondary text-[13px]">Batal</button>
+              <button type="submit" disabled={!file || uploadMut.isPending} className="btn-primary text-[13px] flex items-center gap-2">
+                {uploadMut.isPending && <div className="w-4 h-4 border-2 border-[#ffffff4d] border-t-white rounded-full animate-spin" />}
+                Unggah
+              </button>
+            </div>
+          </form>
+        </Modal>
+
+        {/* Subfolder Modal */}
+        <Modal isOpen={showSubfolder} onClose={() => { setShowSubfolder(false); setSubName(''); }} title="Buat Subfolder">
+          <form onSubmit={(e) => { e.preventDefault(); if (subName.trim()) subfolderMut.mutate(subName.trim()); }} className="space-y-4">
+            <div>
+              <label className="block font-[500] mb-1 text-[12px] text-[#333333]">Nama Subfolder</label>
+              <input type="text" value={subName} onChange={(e) => setSubName(e.target.value)} className="input-field" placeholder="Nama subfolder" autoFocus required />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => { setShowSubfolder(false); setSubName(''); }} className="btn-secondary text-[13px]">Batal</button>
+              <button type="submit" disabled={subfolderMut.isPending} className="btn-primary text-[13px]">Buat</button>
+            </div>
+          </form>
+        </Modal>
+      </div>
+    </Layout>
+  );
+}
